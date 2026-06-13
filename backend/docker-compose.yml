@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: lexprodb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: lexprodb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lexpro-network
+
+  api:
+    build: .
+    container_name: lexpro-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/lexprodb
+      SECRET_KEY: change-this-in-production
+      DEBUG: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    networks:
+      - lexpro-network
+
+  frontend:
+    build: ../frontend
+    container_name: lexpro-frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost/api
+    depends_on:
+      - api
+    networks:
+      - lexpro-network
+
+  nginx:
+    build: ../nginx
+    container_name: lexpro-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - api
+    networks:
+      - lexpro-network
+
+volumes:
+  pgdata:
+
+networks:
+  lexpro-network:
+    driver: bridge

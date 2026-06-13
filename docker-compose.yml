@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: lexprodb
+    environment:
+      POSTGRES_USER: lexpro
+      POSTGRES_PASSWORD: lexpro123
+      POSTGRES_DB: lexprodb
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexpro"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lexpro-network
+
+  api:
+    build: ./backend
+    container_name: lexpro-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - ./backend/.env
+    environment:
+      # These override the .env values so Docker networking works correctly
+      DATABASE_URL: postgresql+asyncpg://lexpro:lexpro123@db:5432/lexprodb
+      SECRET_KEY: change-this-in-production
+      DEBUG: "true"
+      CORS_ORIGINS: '["http://localhost","http://localhost:3000","http://127.0.0.1","http://127.0.0.1:3000","http://192.168.100.90","http://192.168.100.90:3000"]'
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - lexpro-network
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost/api/v1
+    container_name: lexpro-frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost/api/v1
+    depends_on:
+      - api
+    networks:
+      - lexpro-network
+
+  nginx:
+    build: ./nginx
+    container_name: lexpro-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - api
+    networks:
+      - lexpro-network
+
+volumes:
+  pgdata:
+
+networks:
+  lexpro-network:
+    driver: bridge
