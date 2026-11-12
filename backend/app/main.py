@@ -29,8 +29,10 @@ app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     description="Multi-tenant law firm management API — LexPro",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # Interactive API docs only outside production
+    docs_url=None if settings.ENVIRONMENT == "production" else "/docs",
+    redoc_url=None if settings.ENVIRONMENT == "production" else "/redoc",
+    openapi_url=None if settings.ENVIRONMENT == "production" else "/openapi.json",
     lifespan=lifespan,
 )
 
@@ -47,7 +49,6 @@ app.add_middleware(
 API = "/api/v1"
 
 app.include_router(onboarding_router, prefix=API)
-app.include_router(admin_router,     prefix=API)
 app.include_router(auth_router,      prefix=API)
 app.include_router(dashboard_router, prefix=API)
 app.include_router(clients_router,   prefix=API)
@@ -60,6 +61,10 @@ app.include_router(time_router,      prefix=API)
 app.include_router(settings_router,  prefix=API)
 app.include_router(gcal_router,      prefix=API)
 app.include_router(kyc_router,       prefix=API)
+
+# Destructive dev utilities: mounted only in development with ENABLE_ADMIN_ROUTES=true
+if settings.admin_routes_enabled:
+    app.include_router(admin_router, prefix=API)
 
 
 @app.get("/", tags=["Health"])

@@ -26,13 +26,31 @@ cd lexpro
 
 ### 2. Environment Setup
 
-Create a `.env` file in the backend directory based on `.env.example`:
+Secrets are never committed. Create a root `.env` for Docker Compose from the template and fill in real values:
 
 ```bash
-cd backend
 cp .env.example .env
-cd ..
+# Generate values:
+python -c "import secrets; print(secrets.token_urlsafe(24))"   # POSTGRES_PASSWORD
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # SECRET_KEY
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # ENCRYPTION_KEY
 ```
+
+For running the backend outside Docker, copy `backend/.env.example` to `backend/.env` the same way.
+
+Security defaults:
+
+- `DEBUG` defaults to `false`.
+- With `ENVIRONMENT=staging` or `production` the API refuses to start unless `SECRET_KEY` (32+ chars) and a valid `ENCRYPTION_KEY` are set and `DEBUG=false`. API docs (`/docs`, `/redoc`, `/openapi.json`) are disabled in production.
+- The destructive `/api/v1/admin/*` endpoints are mounted only when `ENVIRONMENT=development` **and** `ENABLE_ADMIN_ROUTES=true`.
+
+#### Rotating `ENCRYPTION_KEY`
+
+Stored storage credentials are encrypted with `ENCRYPTION_KEY`. To rotate:
+
+1. Set `ENCRYPTION_KEYS_OLD=<current key>` and `ENCRYPTION_KEY=<new key>`.
+2. Run `docker compose exec api python -m app.scripts.rotate_encryption_key`.
+3. Remove the old key from `ENCRYPTION_KEYS_OLD` and restart.
 
 ### 3. Run with Docker Compose
 

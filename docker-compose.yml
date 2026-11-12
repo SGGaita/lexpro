@@ -5,15 +5,16 @@ services:
     image: postgres:16-alpine
     container_name: lexprodb
     environment:
-      POSTGRES_USER: lexpro
-      POSTGRES_PASSWORD: lexpro123
-      POSTGRES_DB: lexprodb
+      POSTGRES_USER: ${POSTGRES_USER:-lexpro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file}
+      POSTGRES_DB: ${POSTGRES_DB:-lexprodb}
     ports:
-      - "5435:5432"
+      # Bound to localhost only; remove in production
+      - "127.0.0.1:5435:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lexpro"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -25,13 +26,18 @@ services:
     container_name: lexpro-api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     environment:
-      # These override the .env values so Docker networking works correctly
-      DATABASE_URL: postgresql+asyncpg://lexpro:lexpro123@db:5432/lexprodb
-      SECRET_KEY: change-this-in-production
-      DEBUG: "true"
-      CORS_ORIGINS: '["http://localhost","http://localhost:3000","http://127.0.0.1","http://127.0.0.1:3000","http://192.168.100.90","http://192.168.100.90:3000"]'
+      # Secrets come from the root .env file (see .env.example); nothing is hardcoded here.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-lexpro}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-lexprodb}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in the root .env file}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in the root .env file}
+      ENCRYPTION_KEYS_OLD: ${ENCRYPTION_KEYS_OLD:-}
+      ENABLE_ADMIN_ROUTES: ${ENABLE_ADMIN_ROUTES:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost","http://localhost:3000"]}
     depends_on:
       db:
         condition: service_healthy

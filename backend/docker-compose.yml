@@ -6,7 +6,7 @@ services:
     container_name: lexprodb
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}  # local development only
       POSTGRES_DB: lexprodb
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -23,9 +23,13 @@ services:
     container_name: lexpro-api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/lexprodb
-      SECRET_KEY: change-this-in-production
-      DEBUG: "true"
+      # Local development compose. Secrets are read from backend/.env (never committed).
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/lexprodb
+      ENVIRONMENT: development
+      DEBUG: ${DEBUG:-true}
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy
