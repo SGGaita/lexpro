@@ -15,7 +15,7 @@
   --text-secondary: #8B9BB4;
   --text-muted: #4A5568;
   --border: #1E3050;
-  --sidebar-width: 260px;
+  --sidebar-width: 240px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

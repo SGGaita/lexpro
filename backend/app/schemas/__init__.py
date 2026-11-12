@@ -1,6 +1,15 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _to_naive_utc(v):
+    """Strip timezone info — DB columns are TIMESTAMP WITHOUT TIME ZONE."""
+    if v is None:
+        return v
+    if isinstance(v, datetime) and v.tzinfo is not None:
+        return v.astimezone(timezone.utc).replace(tzinfo=None)
+    return v
 
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -55,6 +64,7 @@ class UserOut(BaseModel):
     billable_rate: float
     status: str
     is_active: bool
+    is_default_admin: bool = False
     joined: datetime
 
     model_config = {"from_attributes": True}
@@ -95,17 +105,14 @@ class ClientOut(BaseModel):
     email: Optional[str]
     phone: Optional[str]
     industry: Optional[str]
+    address: Optional[str] = None
+    country: Optional[str] = None
     status: str
     since: datetime
     total_billed: Optional[float] = 0.0
     case_count: Optional[int] = 0
 
     model_config = {"from_attributes": True}
-
-    @field_validator("type", mode="before")
-    @classmethod
-    def extract_type(cls, v):
-        return v.value if hasattr(v, "value") else v
 
 
 class ClientCreate(BaseModel):
@@ -115,6 +122,8 @@ class ClientCreate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     industry: Optional[str] = None
+    address: Optional[str] = None
+    country: Optional[str] = None
 
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
@@ -123,6 +132,8 @@ class ClientUpdate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     industry: Optional[str] = None
+    address: Optional[str] = None
+    country: Optional[str] = None
     status: Optional[str] = None
 
 
@@ -143,6 +154,9 @@ class CaseOut(BaseModel):
     fee: float
     filed: datetime
     next_hearing: Optional[datetime]
+    outcome: Optional[str] = None
+    opposing_party: Optional[str] = None
+    opposing_counsel: Optional[str] = None
     client_name: Optional[str] = None
     assigned_to: Optional[str] = None
 
@@ -166,9 +180,19 @@ class CaseCreate(BaseModel):
     priority: str = "Medium"
     fee: float = 0.0
     next_hearing: Optional[datetime] = None
+    outcome: Optional[str] = None
+    opposing_party: Optional[str] = None
+    opposing_counsel: Optional[str] = None
+
+    @field_validator("next_hearing", mode="after")
+    @classmethod
+    def strip_tz(cls, v): return _to_naive_utc(v)
 
 class CaseUpdate(BaseModel):
     title: Optional[str] = None
+    case_no: Optional[str] = None
+    type: Optional[str] = None
+    client_id: Optional[str] = None
     assigned_user_id: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
@@ -176,6 +200,61 @@ class CaseUpdate(BaseModel):
     next_hearing: Optional[datetime] = None
     fee: Optional[float] = None
     description: Optional[str] = None
+    outcome: Optional[str] = None
+    opposing_party: Optional[str] = None
+    opposing_counsel: Optional[str] = None
+
+    @field_validator("next_hearing", mode="after")
+    @classmethod
+    def strip_tz(cls, v): return _to_naive_utc(v)
+
+
+# ─── KYC ──────────────────────────────────────────────────────────────────────
+
+class KYCOut(BaseModel):
+    id: str
+    client_id: str
+    id_type: Optional[str] = None
+    id_number: Optional[str] = None
+    dob: Optional[datetime] = None
+    nationality: Optional[str] = None
+    occupation: Optional[str] = None
+    pep: bool = False
+    source_of_funds: Optional[str] = None
+    risk_rating: str = "Low"
+    status: str = "Pending"
+    verified_by_id: Optional[str] = None
+    verified_by_name: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def extract_enum(cls, v):
+        return v.value if hasattr(v, "value") else v
+
+
+class KYCCreate(BaseModel):
+    id_type: Optional[str] = None
+    id_number: Optional[str] = None
+    dob: Optional[datetime] = None
+    nationality: Optional[str] = None
+    occupation: Optional[str] = None
+    pep: bool = False
+    source_of_funds: Optional[str] = None
+    risk_rating: str = "Low"
+    expiry_date: Optional[datetime] = None
+    notes: Optional[str] = None
+
+
+class ConflictResult(BaseModel):
+    has_conflicts: bool
+    conflicts: list[dict]
 
 
 # ─── Invoice ──────────────────────────────────────────────────────────────────
@@ -244,6 +323,7 @@ class DocumentOut(BaseModel):
     uploaded_at: datetime
     uploaded_by: Optional[str] = None
     client_name: Optional[str] = None
+    case_title: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -297,13 +377,24 @@ class EventCreate(BaseModel):
     notes: Optional[str] = None
     priority: str = "Medium"
 
+    @field_validator("date", mode="after")
+    @classmethod
+    def strip_tz(cls, v): return _to_naive_utc(v)
+
 class EventUpdate(BaseModel):
     title: Optional[str] = None
+    case_id: Optional[str] = None
+    lawyer_id: Optional[str] = None
     date: Optional[datetime] = None
     time: Optional[str] = None
+    type: Optional[str] = None
     court: Optional[str] = None
     notes: Optional[str] = None
     priority: Optional[str] = None
+
+    @field_validator("date", mode="after")
+    @classmethod
+    def strip_tz(cls, v): return _to_naive_utc(v)
 
 
 # ─── Time Entry ───────────────────────────────────────────────────────────────

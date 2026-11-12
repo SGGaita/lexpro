@@ -10,7 +10,7 @@ export default function Layout({ children, title }) {
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
-      router.replace("/");
+      router.replace("/login");
     }
   }, [isAuthenticated, loading]);
 
@@ -20,12 +20,12 @@ export default function Layout({ children, title }) {
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
       <Sidebar />
       <Box sx={{ flex: 1, ml: "var(--sidebar-width)", display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-        <Box sx={{ px: 4, py: 2.5, borderBottom: "1px solid var(--border)", background: "rgba(10,15,26,0.8)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 50 }}>
-          <Typography sx={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.6rem", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>
+        <Box sx={{ px: 3, py: 1.75, borderBottom: "1px solid var(--border)", background: "rgba(10,15,26,0.85)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 50 }}>
+          <Typography sx={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>
             {title}
           </Typography>
         </Box>
-        <Box sx={{ flex: 1, p: 4, background: "var(--bg-base)" }}>{children}</Box>
+        <Box sx={{ flex: 1, p: 3, background: "var(--bg-base)" }}>{children}</Box>
       </Box>
     </Box>
   );

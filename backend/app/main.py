@@ -12,6 +12,9 @@ from app.routers import (
     clients_router, cases_router, billing_router,
     documents_router, calendar_router, staff_router, time_router,
 )
+from app.routers.settings import router as settings_router
+from app.routers.gcal import router as gcal_router
+from app.routers.kyc import router as kyc_router
 
 
 @asynccontextmanager
@@ -54,6 +57,9 @@ app.include_router(documents_router, prefix=API)
 app.include_router(calendar_router,  prefix=API)
 app.include_router(staff_router,     prefix=API)
 app.include_router(time_router,      prefix=API)
+app.include_router(settings_router,  prefix=API)
+app.include_router(gcal_router,      prefix=API)
+app.include_router(kyc_router,       prefix=API)
 
 
 @app.get("/", tags=["Health"])
