@@ -1,37 +1,19 @@
 import { useState } from "react";
-import { Box, Typography, Button, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Grid, LinearProgress } from "@mui/material";
+import { Box, Typography, Button, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, LinearProgress } from "@mui/material";
 import Layout from "../../components/Layout";
+import StatCard from "../../components/StatCard";
 import { useApp } from "../../context/AppContext";
 import AddIcon from "@mui/icons-material/Add";
-import ReceiptIcon from "@mui/icons-material/Receipt";
-import WarningIcon from "@mui/icons-material/Warning";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 
 const fmt = (n) => new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES", minimumFractionDigits: 0 }).format(n);
 const fmtC = (n) => new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES", notation: "compact", maximumFractionDigits: 1 }).format(n);
 
 const statusStyles = {
-  Paid: { bg: "rgba(46,204,113,0.12)", color: "#2ECC71", icon: CheckCircleIcon },
-  Pending: { bg: "rgba(243,156,18,0.12)", color: "#F39C12", icon: HourglassEmptyIcon },
-  Overdue: { bg: "rgba(231,76,60,0.12)", color: "#E74C3C", icon: WarningIcon },
-  Partial: { bg: "rgba(74,144,217,0.12)", color: "#4A90D9", icon: HourglassEmptyIcon },
+  Paid: { bg: "rgba(46,204,113,0.12)", color: "#2ECC71" },
+  Pending: { bg: "rgba(243,156,18,0.12)", color: "#F39C12" },
+  Overdue: { bg: "rgba(231,76,60,0.12)", color: "#E74C3C" },
+  Partial: { bg: "rgba(74,144,217,0.12)", color: "#4A90D9" },
 };
-
-function BillingStatCard({ label, value, sub, color, Icon }) {
-  return (
-    <Box sx={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "14px", p: 2.5 }}>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1.5 }}>
-        <Box sx={{ width: 34, height: 34, borderRadius: "8px", background: `${color}18`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Icon sx={{ fontSize: 17, color }} />
-        </Box>
-        <Typography sx={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</Typography>
-      </Box>
-      <Typography sx={{ fontSize: "1.6rem", fontWeight: 700, fontFamily: "'Cormorant Garamond', serif", letterSpacing: "-0.02em", color: "var(--text-primary)" }}>{value}</Typography>
-      {sub && <Typography sx={{ fontSize: "0.72rem", color: "var(--text-muted)", mt: 0.3 }}>{sub}</Typography>}
-    </Box>
-  );
-}
 
 export default function Billing() {
   const { tenantData } = useApp();
@@ -47,12 +29,12 @@ export default function Billing() {
 
   return (
     <Layout title="Billing & Invoices">
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={6} md={3}><BillingStatCard label="Total Billed" value={fmtC(totalBilled)} color="#D4A843" Icon={ReceiptIcon} /></Grid>
-        <Grid item xs={6} md={3}><BillingStatCard label="Collected" value={fmtC(totalCollected)} sub={`${Math.round((totalCollected / totalBilled) * 100)}% collection rate`} color="#2ECC71" Icon={CheckCircleIcon} /></Grid>
-        <Grid item xs={6} md={3}><BillingStatCard label="Outstanding" value={fmtC(totalOutstanding)} color="#F39C12" Icon={HourglassEmptyIcon} /></Grid>
-        <Grid item xs={6} md={3}><BillingStatCard label="Overdue" value={overdue.length} sub="invoices past due date" color="#E74C3C" Icon={WarningIcon} /></Grid>
-      </Grid>
+      <Box sx={{ display: "flex", gap: 1.25, mb: 2, flexWrap: "wrap" }}>
+        <StatCard label="Total Billed" value={fmtC(totalBilled)} />
+        <StatCard label="Collected" value={fmtC(totalCollected)} sub={`${Math.round((totalCollected / totalBilled) * 100)}% collection rate`} accent="var(--accent-green)" />
+        <StatCard label="Outstanding" value={fmtC(totalOutstanding)} />
+        <StatCard label="Overdue" value={overdue.length} sub="invoices past due date" accent="var(--accent-red)" />
+      </Box>
 
       {/* Collection progress */}
       <Box sx={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "12px", p: 2.5, mb: 3 }}>
@@ -96,17 +78,11 @@ export default function Billing() {
           <TableBody>
             {filtered.map((inv) => {
               const style = statusStyles[inv.status] || statusStyles.Pending;
-              const Icon = style.icon;
               const balance = inv.amount - inv.paid;
               return (
                 <TableRow key={inv.id} sx={{ cursor: "pointer" }}>
                   <TableCell>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                      <Box sx={{ width: 32, height: 32, borderRadius: "8px", background: `${style.color}15`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Icon sx={{ fontSize: 15, color: style.color }} />
-                      </Box>
-                      <Typography sx={{ fontSize: "0.82rem", fontWeight: 500, fontFamily: "monospace", letterSpacing: "0.03em" }}>{inv.number}</Typography>
-                    </Box>
+                    <Typography sx={{ fontSize: "0.78rem", fontWeight: 500, fontFamily: "monospace", letterSpacing: "0.03em" }}>{inv.number}</Typography>
                   </TableCell>
                   <TableCell><Typography sx={{ fontSize: "0.82rem" }}>{inv.client}</Typography></TableCell>
                   <TableCell>
@@ -122,7 +98,7 @@ export default function Billing() {
                   <TableCell align="right"><Typography sx={{ fontSize: "0.85rem", color: "#2ECC71" }}>{fmt(inv.paid)}</Typography></TableCell>
                   <TableCell align="right">
                     <Typography sx={{ fontSize: "0.85rem", fontWeight: 600, color: balance > 0 ? (inv.status === "Overdue" ? "#E74C3C" : "var(--accent-gold)") : "var(--text-muted)" }}>
-                      {balance > 0 ? fmt(balance) : "—"}
+                      {balance > 0 ? fmt(balance) : "\u2014"}
                     </Typography>
                   </TableCell>
                 </TableRow>

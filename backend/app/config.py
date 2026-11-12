@@ -22,6 +22,12 @@ class Settings(BaseSettings):
         "http://192.168.100.90:3000",
     ]
 
+    # Google Calendar OAuth
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://192.168.100.90/api/v1/gcal/oauth/callback"
+    APP_BASE_URL: str = "http://192.168.100.90"
+
     # Encryption key for storing storage credentials
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     ENCRYPTION_KEY: str = "placeholder-replace-with-real-fernet-key-32bytes=="
@@ -34,5 +40,6 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"  # ignore unknown env vars (e.g. R2_TOKEN, custom vars)
 
 settings = Settings()

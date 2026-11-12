@@ -3,17 +3,21 @@ All resource routers — one file for brevity.
 Each router is a separate APIRouter and registered individually in main.py.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional, List
 from datetime import datetime
+from pathlib import Path
 
 from app.database import get_db
 from app.models import (
     User, Tenant, Client, Case, Invoice, InvoiceItem,
-    Document, CalendarEvent, TimeEntry, CaseStatus
+    Document, CalendarEvent, TimeEntry, CaseStatus, StorageConfig, UserRole
 )
+from sqlalchemy import update as sa_update
+from app.models import gen_uuid
 from app.schemas import (
     ClientOut, ClientCreate, ClientUpdate,
     CaseOut, CaseCreate, CaseUpdate,
@@ -80,6 +84,23 @@ async def create_client(
     d.total_billed = 0
     return d
 
+@clients_router.get("/{client_id}", response_model=ClientOut)
+async def get_client(
+    client_id: str,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Client).where(Client.id == client_id, Client.tenant_id == tenant.id))
+    client = result.scalar_one_or_none()
+    if not client:
+        raise not_found("Client")
+    case_count   = await db.scalar(select(func.count(Case.id)).where(Case.client_id == client.id))
+    total_billed = await db.scalar(select(func.coalesce(func.sum(Invoice.amount), 0)).where(Invoice.client_id == client.id)) or 0
+    d = ClientOut.model_validate(client)
+    d.case_count   = case_count or 0
+    d.total_billed = total_billed
+    return d
+
 @clients_router.put("/{client_id}", response_model=ClientOut)
 async def update_client(
     client_id: str,
@@ -141,6 +162,18 @@ async def list_cases(
         q = q.where(Case.priority == priority)
     result = await db.execute(q.order_by(Case.filed.desc()))
     return [await _enrich_case(c, db) for c in result.scalars().all()]
+
+@cases_router.get("/{case_id}", response_model=CaseOut)
+async def get_case(
+    case_id: str,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant.id))
+    case = result.scalar_one_or_none()
+    if not case:
+        raise not_found("Case")
+    return await _enrich_case(case, db)
 
 @cases_router.post("", response_model=CaseOut, status_code=201)
 async def create_case(
@@ -261,6 +294,29 @@ async def update_invoice(
 
 documents_router = APIRouter(prefix="/documents", tags=["Documents"])
 
+
+async def _enrich_doc(doc: Document, db: AsyncSession) -> DocumentOut:
+    """Populate computed fields on DocumentOut."""
+    d = DocumentOut.model_validate(doc)
+    if doc.case_id:
+        r = await db.execute(select(Case).where(Case.id == doc.case_id))
+        case = r.scalar_one_or_none()
+        if case:
+            d.case_title = case.title
+            if case.client_id:
+                r2 = await db.execute(select(Client.name).where(Client.id == case.client_id))
+                d.client_name = r2.scalar_one_or_none()
+    if doc.uploaded_by_id:
+        r = await db.execute(select(User.name).where(User.id == doc.uploaded_by_id))
+        d.uploaded_by = r.scalar_one_or_none()
+    return d
+
+
+async def _get_storage(tenant_id: str, db: AsyncSession) -> Optional[StorageConfig]:
+    r = await db.execute(select(StorageConfig).where(StorageConfig.tenant_id == tenant_id))
+    return r.scalar_one_or_none()
+
+
 @documents_router.get("", response_model=List[DocumentOut])
 async def list_documents(
     search: Optional[str] = None,
@@ -278,21 +334,45 @@ async def list_documents(
         q = q.where(Document.case_id == case_id)
     result = await db.execute(q.order_by(Document.uploaded_at.desc()))
     docs = result.scalars().all()
+    return [await _enrich_doc(doc, db) for doc in docs]
 
-    out = []
-    for doc in docs:
-        d = DocumentOut.model_validate(doc)
-        if doc.case_id:
-            r = await db.execute(select(Case).where(Case.id == doc.case_id))
-            case = r.scalar_one_or_none()
-            if case and case.client_id:
-                r2 = await db.execute(select(Client.name).where(Client.id == case.client_id))
-                d.client_name = r2.scalar_one_or_none()
-        if doc.uploaded_by_id:
-            r = await db.execute(select(User.name).where(User.id == doc.uploaded_by_id))
-            d.uploaded_by = r.scalar_one_or_none()
-        out.append(d)
-    return out
+
+@documents_router.post("/upload", response_model=DocumentOut, status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    type: str = Form("Correspondence"),
+    case_id: Optional[str] = Form(None),
+    tags: str = Form(""),
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a file to the tenant's configured storage and register a Document record."""
+    from app.storage import upload_file as storage_upload
+
+    doc_id = gen_uuid()
+    file_name = name or file.filename or "untitled"
+    storage_config = await _get_storage(tenant.id, db)
+
+    file_path, size_str = await storage_upload(storage_config, tenant.id, doc_id, file)
+
+    doc = Document(
+        id=doc_id,
+        tenant_id=tenant.id,
+        uploaded_by_id=current_user.id,
+        case_id=case_id or None,
+        name=file_name,
+        type=type,
+        size=size_str,
+        file_path=file_path,
+        tags=tags,
+    )
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+    return await _enrich_doc(doc, db)
+
 
 @documents_router.post("", response_model=DocumentOut, status_code=201)
 async def create_document(
@@ -301,11 +381,48 @@ async def create_document(
     tenant: Tenant = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    """Create a document metadata record without a file (legacy / manual entry)."""
     doc = Document(tenant_id=tenant.id, uploaded_by_id=current_user.id, **body.model_dump())
     db.add(doc)
     await db.flush()
     await db.refresh(doc)
-    return DocumentOut.model_validate(doc)
+    return await _enrich_doc(doc, db)
+
+
+@documents_router.get("/{doc_id}/download")
+async def download_document(
+    doc_id: str,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream local file or redirect to presigned URL depending on tenant storage."""
+    from app.storage import get_presigned_url
+
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.tenant_id == tenant.id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise not_found("Document")
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="No file associated with this document")
+
+    storage_config = await _get_storage(tenant.id, db)
+    presigned = get_presigned_url(storage_config, doc.file_path, doc.name)
+
+    if presigned:
+        return RedirectResponse(url=presigned)
+
+    # lexpro_managed — stream from local filesystem
+    local_path = Path(doc.file_path)
+    if not local_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    return FileResponse(
+        str(local_path),
+        filename=doc.name,
+        media_type="application/octet-stream",
+    )
+
 
 @documents_router.delete("/{doc_id}", status_code=204)
 async def delete_document(
@@ -313,11 +430,22 @@ async def delete_document(
     tenant: Tenant = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Document).where(Document.id == doc_id, Document.tenant_id == tenant.id))
+    from app.storage import delete_file as storage_delete
+
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.tenant_id == tenant.id)
+    )
     doc = result.scalar_one_or_none()
     if not doc:
         raise not_found("Document")
+
+    file_path = doc.file_path
     await db.delete(doc)
+    await db.flush()
+
+    # Clean up the file after the DB row is gone
+    storage_config = await _get_storage(tenant.id, db)
+    await storage_delete(storage_config, file_path)
 
 
 # ─── Calendar ─────────────────────────────────────────────────────────────────
@@ -348,6 +476,17 @@ async def list_events(
         out.append(d)
     return out
 
+async def _enrich_event(event: CalendarEvent, db: AsyncSession) -> EventOut:
+    d = EventOut.model_validate(event)
+    if event.lawyer_id:
+        r = await db.execute(select(User.name).where(User.id == event.lawyer_id))
+        d.lawyer_name = r.scalar_one_or_none()
+    if event.case_id:
+        r = await db.execute(select(Case.title).where(Case.id == event.case_id))
+        d.case_title = r.scalar_one_or_none()
+    return d
+
+
 @calendar_router.post("", response_model=EventOut, status_code=201)
 async def create_event(
     body: EventCreate,
@@ -358,7 +497,16 @@ async def create_event(
     db.add(event)
     await db.flush()
     await db.refresh(event)
-    return EventOut.model_validate(event)
+    enriched = await _enrich_event(event, db)
+    await db.commit()
+    # Auto-push to Google Calendar (non-blocking best-effort)
+    try:
+        from app.routers.gcal import push_event as gcal_push
+        await gcal_push(event, db, case_title=enriched.case_title)
+        await db.commit()
+    except Exception:
+        pass
+    return enriched
 
 @calendar_router.put("/{event_id}", response_model=EventOut)
 async def update_event(
@@ -375,7 +523,16 @@ async def update_event(
         setattr(event, k, v)
     await db.flush()
     await db.refresh(event)
-    return EventOut.model_validate(event)
+    enriched = await _enrich_event(event, db)
+    await db.commit()
+    # Auto-push update to Google Calendar
+    try:
+        from app.routers.gcal import push_event as gcal_push
+        await gcal_push(event, db, case_title=enriched.case_title)
+        await db.commit()
+    except Exception:
+        pass
+    return enriched
 
 @calendar_router.delete("/{event_id}", status_code=204)
 async def delete_event(
@@ -387,7 +544,15 @@ async def delete_event(
     event = result.scalar_one_or_none()
     if not event:
         raise not_found("Event")
+    google_event_id = event.google_event_id
     await db.delete(event)
+    await db.commit()
+    # Auto-delete from Google Calendar
+    try:
+        from app.routers.gcal import delete_event as gcal_delete
+        await gcal_delete(tenant.id, google_event_id, db)
+    except Exception:
+        pass
 
 
 # ─── Staff ────────────────────────────────────────────────────────────────────
@@ -439,6 +604,57 @@ async def update_staff(
     await db.flush()
     await db.refresh(user)
     return UserOut.model_validate(user)
+
+
+@staff_router.put("/{user_id}/set-default-admin", response_model=UserOut)
+async def set_default_admin(
+    user_id: str,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id, User.tenant_id == tenant.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise not_found("Staff member")
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=400, detail="Only Admin-role users can be set as default admin.")
+    # Clear existing default admin flag across all users in this tenant
+    await db.execute(
+        sa_update(User).where(User.tenant_id == tenant.id, User.is_default_admin == True).values(is_default_admin=False)
+    )
+    user.is_default_admin = True
+    await db.flush()
+    await db.refresh(user)
+    return UserOut.model_validate(user)
+
+
+@staff_router.delete("/{user_id}", status_code=204)
+async def delete_staff(
+    user_id: str,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id, User.tenant_id == tenant.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise not_found("Staff member")
+    # Block deletion of default admin
+    if user.is_default_admin:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete the default admin account. Set another admin as default first.",
+        )
+    # Block deletion if this is the only Admin in the tenant
+    if user.role == UserRole.admin:
+        cnt_result = await db.execute(
+            select(func.count(User.id)).where(User.tenant_id == tenant.id, User.role == UserRole.admin)
+        )
+        if cnt_result.scalar() <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete the only admin account. Promote another user to Admin first.",
+            )
+    await db.delete(user)
 
 
 # ─── Time Tracking ────────────────────────────────────────────────────────────

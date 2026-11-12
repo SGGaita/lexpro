@@ -39,7 +39,7 @@ services:
     container_name: lexpro-frontend
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: http://localhost/api
+      NEXT_PUBLIC_API_URL: /api/v1
     depends_on:
       - api
     networks:

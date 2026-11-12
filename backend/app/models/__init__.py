@@ -83,6 +83,12 @@ class ClientType(str, enum.Enum):
     individual = "Individual"
     government = "Government"
 
+class KYCStatus(str, enum.Enum):
+    pending  = "Pending"
+    verified = "Verified"
+    rejected = "Rejected"
+    expired  = "Expired"
+
 
 # ─── Tenant ───────────────────────────────────────────────────────────────────
 
@@ -129,6 +135,7 @@ class User(Base):
     avatar: Mapped[str] = mapped_column(String(10), nullable=True)
     billable_rate: Mapped[float] = mapped_column(Float, default=10000.0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(50), default="Active")
     joined: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -149,11 +156,13 @@ class Client(Base):
     id: Mapped[str] = uuid_pk()
     tenant_id: Mapped[str] = uuid_fk("tenants.id", nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    type: Mapped[ClientType] = mapped_column(SAEnum(ClientType), default=ClientType.individual)
+    type: Mapped[str] = mapped_column(String(100), default="Individual")   # free text, not enum
     contact: Mapped[str] = mapped_column(String(200), nullable=True)
     email: Mapped[str] = mapped_column(String(255), nullable=True)
     phone: Mapped[str] = mapped_column(String(50), nullable=True)
-    industry: Mapped[str] = mapped_column(String(100), nullable=True)
+    industry: Mapped[str] = mapped_column(Text, nullable=True)             # comma-separated, multiple
+    address: Mapped[str] = mapped_column(Text, nullable=True)              # physical address
+    country: Mapped[str] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="Active")
     since: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -162,6 +171,7 @@ class Client(Base):
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="clients")
     cases: Mapped[list["Case"]] = relationship("Case", back_populates="client")
     invoices: Mapped[list["Invoice"]] = relationship("Invoice", back_populates="client")
+    kyc: Mapped["ClientKYC"] = relationship("ClientKYC", back_populates="client", uselist=False, cascade="all, delete-orphan")
 
 
 # ─── Case ─────────────────────────────────────────────────────────────────────
@@ -184,6 +194,9 @@ class Case(Base):
     fee: Mapped[float] = mapped_column(Float, default=0.0)
     filed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     next_hearing: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    outcome: Mapped[str] = mapped_column(Text, nullable=True)
+    opposing_party: Mapped[str] = mapped_column(String(300), nullable=True)
+    opposing_counsel: Mapped[str] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -276,6 +289,7 @@ class CalendarEvent(Base):
     court: Mapped[str] = mapped_column(String(300), nullable=True)
     notes: Mapped[str] = mapped_column(Text, nullable=True)
     priority: Mapped[CasePriority] = mapped_column(SAEnum(CasePriority), default=CasePriority.medium)
+    google_event_id: Mapped[str] = mapped_column(String(500), nullable=True)  # tracks synced Google event
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -305,6 +319,60 @@ class TimeEntry(Base):
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="time_entries")
     user: Mapped["User"] = relationship("User", back_populates="time_entries")
     case: Mapped["Case"] = relationship("Case", back_populates="time_entries")
+
+
+# ─── Google Calendar Token ────────────────────────────────────────────────────
+
+class GoogleCalendarToken(Base):
+    __tablename__ = "google_calendar_tokens"
+
+    id: Mapped[str] = uuid_pk()
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, unique=True)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+    token_expiry: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    calendar_id: Mapped[str] = mapped_column(String(300), default="primary")
+    calendar_name: Mapped[str] = mapped_column(String(300), nullable=True)
+    last_sync: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    tenant: Mapped["Tenant"] = relationship("Tenant")
+
+
+# ─── Client KYC ──────────────────────────────────────────────────────────────
+
+class ClientKYC(Base):
+    __tablename__ = "client_kyc"
+
+    id: Mapped[str] = uuid_pk()
+    tenant_id: Mapped[str] = uuid_fk("tenants.id", nullable=False)
+    client_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, unique=True)
+
+    # Identity fields
+    id_type: Mapped[str] = mapped_column(String(100), nullable=True)      # National ID / Passport / PIN etc.
+    id_number: Mapped[str] = mapped_column(String(200), nullable=True)
+    dob: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    nationality: Mapped[str] = mapped_column(String(100), nullable=True)
+    occupation: Mapped[str] = mapped_column(String(200), nullable=True)
+
+    # Risk fields
+    pep: Mapped[bool] = mapped_column(Boolean, default=False)             # Politically Exposed Person
+    source_of_funds: Mapped[str] = mapped_column(Text, nullable=True)
+    risk_rating: Mapped[str] = mapped_column(String(20), default="Low")   # Low / Medium / High
+
+    # Verification
+    status: Mapped[KYCStatus] = mapped_column(SAEnum(KYCStatus), default=KYCStatus.pending)
+    verified_by_id: Mapped[str] = uuid_fk("users.id", nullable=True, ondelete="SET NULL")
+    verified_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    expiry_date: Mapped[datetime] = mapped_column(DateTime, nullable=True) # when KYC should be renewed
+    notes: Mapped[str] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    client: Mapped["Client"] = relationship("Client", back_populates="kyc")
+    verified_by: Mapped["User"] = relationship("User", foreign_keys=[verified_by_id])
 
 
 # ─── Storage Config ───────────────────────────────────────────────────────────
